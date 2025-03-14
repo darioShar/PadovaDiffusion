@@ -8,6 +8,7 @@ Install the required packages using:
 pip install -r requirements.txt
 ```
 
+To verify that everything works well on your machine, just run my commands as is. The default MLP model is very small and any machine with a reasonable cpu will handle it. 
 
 ## Usage
 
@@ -15,7 +16,7 @@ The main script is `diffusion.py`, which supports two modes: **training** and **
 
 ### Training
 
-Train the MD4 model on Binary MNIST with basic data augmentation (random horizontal flipping):
+Train the diffusion model:
 
 ```bash
 python diffusion.py train --epochs 50 --checkpoint_interval 25 --batch_size 250 --learning_rate 2e-3 --dataset gaussian_mixture 
