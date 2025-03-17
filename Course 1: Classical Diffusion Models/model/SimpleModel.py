@@ -54,7 +54,7 @@ class MLPModel(nn.Module):
                                       self.act)
         
 
-        self.linear_in =  nn.Linear(self.nfeatures + self.additional_dim, self.nunits)
+        self.linear_in =  nn.Linear(self.nfeatures, self.nunits)
         
         self.inblock = nn.Sequential(self.linear_in,
                                      self.layer_norm_in, 
