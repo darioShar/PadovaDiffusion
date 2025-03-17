@@ -115,12 +115,13 @@ class DiffusionProcess:
         t_norm = t / self.T  # normalize to [0,1]
         if self.process_type == 'VP':
             alpha_bar = self.alpha_bar(t_norm).view(-1, *([1] * (x.dim() - 1)))
-            epsilon = model(x, t_norm.view(-1, 1))
+            
+            epsilon = model(x, t_norm) #.view(-1, 1))
             score = -epsilon / torch.sqrt(1 - alpha_bar)
             return score
         elif self.process_type == 'VE':
             sigma_t = self.sigma_fn(t_norm).view(-1, *([1] * (x.dim() - 1)))
-            epsilon = model(x, t_norm.view(-1, 1))
+            epsilon = model(x, t_norm)#.view(-1, 1))
             score = -epsilon / sigma_t
             return score
 
@@ -156,11 +157,11 @@ class DiffusionProcess:
         if model_kwargs is None:
             model_kwargs = {}
         # The model takes x_t and normalized time t_norm
-        predicted_noise = model(x_t, t_norm.view(-1, 1), **model_kwargs)
+        predicted_noise = model(x_t, t_norm, **model_kwargs)
         loss = F.mse_loss(predicted_noise, noise)
         return {'loss': loss}
 
-    def sample(self, model, shape, get_sample_history=False, reverse_steps=1000, progress=True, **kwargs):
+    def sample(self, model, shape, get_sample_history=False, reverse_steps=1000, progress=True, deterministic = False, **kwargs):
         """
         SDE sampling using the Euler–Maruyama method to solve the reverse-time SDE:
           dx = [f(x,t) - g(t)^2 * score(x,t)] dt + g(t) dẆ
@@ -213,8 +214,11 @@ class DiffusionProcess:
                 score = self.score_fn(model, xt, t_batch)
                 # Euler–Maruyama update:
                 #   x = x + [f - g^2 * score] dt + g * sqrt(-dt) * z,   where z ~ N(0, I)
-                z = torch.randn_like(xt)
-                xt = xt + (f - (g**2) * score) * dt + g * torch.sqrt(-dt) * z
+                if not deterministic:
+                    z = torch.randn_like(xt)
+                    xt = xt + (f - (g**2) * score) * dt + g * torch.sqrt(-dt) * z
+                else:
+                    xt = xt + (f - (g**2) * score / 2) * dt
                 if get_sample_history:
                     samples.append(xt.clone())
         return xt if not get_sample_history else torch.stack(samples)
@@ -305,25 +309,18 @@ def get_device():
 # Data loader, with augmentation for MNIST
 #############################################
 
-def create_dataloader(dataset, batch_size):
-    """
-    Returns a DataLoader for the specified dataset.
-    """
-    if dataset == "mnist":
-        print("Using MNIST dataset")
+def create_dataset(dataset_name):
+    if dataset_name == "mnist":
         transform = transforms.Compose([
             transforms.Resize(32),
             transforms.CenterCrop(32),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
         ])
-        dataset_obj = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-        dataloader = torch.utils.data.DataLoader(dataset_obj, batch_size=batch_size, shuffle=True)
-    elif dataset == "gaussian_mixture":
+        dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+    elif dataset_name == "gaussian_mixture":
         # Create a dataset with a Gaussian mixture distribution:
         # Two equal mixtures with means [-0.5, 0] and [0.5, 0], and standard deviation 0.1. 5000 samples.
-        print("Using Gaussian Mixture dataset, with parameters mean=[-0.5, 0], [0.5, 0] and std=0.1. 10000 samples.")
-        # Here we simply generate the data.
         n_samples = 10000
         means = np.array([[-0.5, 0.0], [0.5, 0.0]])
         std = 0.1
@@ -331,12 +328,19 @@ def create_dataloader(dataset, batch_size):
         samples1 = np.random.randn(n_samples // 2, 2) * std + means[0]
         samples2 = np.random.randn(n_samples - n_samples // 2, 2) * std + means[1]
         samples = np.concatenate([samples1, samples2], axis=0).astype(np.float32)
-        # Create a TensorDataset.
-        dataset_obj = torch.utils.data.TensorDataset(torch.from_numpy(samples), torch.zeros(len(samples)))
-        dataloader = torch.utils.data.DataLoader(dataset_obj, batch_size=batch_size, shuffle=True)
+        # shuffle dataset
+        np.random.shuffle(samples)
+        dataset = torch.utils.data.TensorDataset(torch.from_numpy(samples), torch.zeros(len(samples)))
     else:
-        raise ValueError(f"Unknown dataset: {dataset}")
-    return dataloader
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+    return dataset
+    
+
+def create_dataloader(dataset, batch_size):
+    """
+    Returns a DataLoader for the specified dataset.
+    """
+    return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 
 
@@ -354,6 +358,7 @@ def train(num_epochs, checkpoint_interval, batch_size, learning_rate, checkpoint
     model = create_model(dataset).to(device) # the model will depend on the dataset used
     # model = create_unet().to(device)
     optimizer = create_optimizer(model, lr=learning_rate)
+    dataset = create_dataset(dataset)
     dataloader = create_dataloader(dataset, batch_size)
 
     model.train()
@@ -361,6 +366,7 @@ def train(num_epochs, checkpoint_interval, batch_size, learning_rate, checkpoint
     for epoch in (range(1, num_epochs + 1)):
         running_loss = 0.0
         for batch_idx, (data, _) in (enumerate(dataloader)):
+            
             data = data.to(device) 
             optimizer.zero_grad()
 
@@ -396,15 +402,17 @@ def train(num_epochs, checkpoint_interval, batch_size, learning_rate, checkpoint
 # Generation procedure and image saving
 #############################################
 
-def generate(checkpoint_path, num_images, reverse_steps, get_samples_history, output_path, dataset):
+def generate(checkpoint_path, num_images, reverse_steps, get_samples_history, output_path, dataset_name):
     device = get_device()
     print("Using device:", device)
 
     # Create MD4Generation and the model.
     diffusion_process = DiffusionProcess(device=device)
     # the model will depend on the dataset used
-    model = create_model(dataset).to(device)
+    model = create_model(dataset_name).to(device)
     # model = create_unet().to(device)
+    
+    dataset = create_dataset(dataset_name)
 
     # Load the checkpoint.
     checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -413,17 +421,19 @@ def generate(checkpoint_path, num_images, reverse_steps, get_samples_history, ou
 
     with torch.inference_mode():
         # For MNIST, shape=(num_images, 1, 32, 32); for gaussian_mixture, shape=(num_images, 2)
-        shape = (num_images, 1, 32, 32) if dataset == "mnist" else (num_images, 2)
+        shape = (num_images, 1, 32, 32) if dataset_name == "mnist" else (num_images, 2)
+        print('Generating samples with shape:', shape)
         samples = diffusion_process.sample(
             model=model,
             shape=shape,
             reverse_steps=reverse_steps,
             get_sample_history=get_samples_history,
+            deterministic=False,
             progress=True
         )
 
     # Save the generated images.
-    save_images(samples, output_path, get_samples_history)
+    save_images(samples, output_path, get_samples_history, dataset=dataset)
     print("Saved generated images to", output_path)
 
 def save_images(samples, output_path, get_samples_history=False, dataset = None):
@@ -449,11 +459,11 @@ def save_images(samples, output_path, get_samples_history=False, dataset = None)
         box_lim = 1.2
         final_samples = torch.clamp(final_samples, -box_lim, box_lim)
         plt.figure(figsize=(6, 6))
-        plt.scatter(final_samples[:, 0].cpu(), final_samples[:, 1].cpu(), s=10, alpha=0.6, label="Generated samples")
         if dataset is not None:
             # retrieve some samples from the original dataset
-            real_samples = dataset[:final_samples.shape[0]]
-            plt.scatter(real_samples[:, 0].cpu(), real_samples[:, 1].cpu(), s=10, alpha=0.6, label="Real samples")
+            real_samples, _ = dataset[:final_samples.shape[0]]
+            plt.scatter(real_samples[:, 0].cpu(), real_samples[:, 1].cpu(), s=10, alpha=0.4, label="Real samples")
+        plt.scatter(final_samples[:, 0].cpu(), final_samples[:, 1].cpu(), s=10, alpha=0.4, label="Generated samples")
         plt.title("Generated 2D Gaussian Mixture")
         plt.xlabel("x")
         plt.ylabel("y")
@@ -533,7 +543,7 @@ if __name__ == '__main__':
             reverse_steps=args.reverse_steps,
             get_samples_history=args.get_samples_history,
             output_path=args.output_path,
-            dataset=args.dataset
+            dataset_name=args.dataset
         )
     else:
         parser.print_help()

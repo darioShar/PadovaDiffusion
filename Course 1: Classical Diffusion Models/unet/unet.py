@@ -154,7 +154,7 @@ class ResBlock(TimestepBlock):
             SiLU(),
             nn.Dropout(p=dropout),
             zero_module(
-                conv_nd(dims, self.out_channels, self.out_channels, 3, padding=1),
+                conv_nd(dims, self.out_channels, self.out_channels, 3, padding=1)
             ),
         )
 
@@ -312,9 +312,6 @@ class UNetModel(nn.Module):
         num_heads=1,
         num_heads_upsample=-1,
         use_scale_shift_norm=False,
-        first_layer_embedding=True,
-        embedding_dim = 2,
-        output_dim = 1, # can be sigmoid or softmax
     ):
         super().__init__()
 
@@ -333,11 +330,7 @@ class UNetModel(nn.Module):
         self.use_checkpoint = use_checkpoint
         self.num_heads = num_heads
         self.num_heads_upsample = num_heads_upsample
-        self.first_layer_embedding = first_layer_embedding
 
-        # multiply output_channel by output_dim, then we will apply a softmax layer
-        self.out_channels = out_channels * output_dim
-        
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
             linear(model_channels, time_embed_dim),
@@ -348,20 +341,13 @@ class UNetModel(nn.Module):
         if self.num_classes is not None:
             self.label_emb = nn.Embedding(num_classes, time_embed_dim)
 
-        # add a first layer embedding in the form of a linear layer
-        input_channels = in_channels
-        if self.first_layer_embedding:
-            self.input_embedding = nn.Embedding(embedding_dim, model_channels)
-            input_channels = model_channels
-        
         self.input_blocks = nn.ModuleList(
             [
                 TimestepEmbedSequential(
-                    conv_nd(dims, input_channels, model_channels, 3, padding=1)
+                    conv_nd(dims, in_channels, model_channels, 3, padding=1)
                 )
             ]
         )
-        
         input_block_chans = [model_channels]
         ch = model_channels
         ds = 1
@@ -442,14 +428,12 @@ class UNetModel(nn.Module):
                     layers.append(Upsample(ch, conv_resample, dims=dims))
                     ds //= 2
                 self.output_blocks.append(TimestepEmbedSequential(*layers))
-        
-        self.out = [
+
+        self.out = nn.Sequential(
             normalization(ch, num_groups = min(32, ch)),
             SiLU(),
-            zero_module(conv_nd(dims, model_channels, self.out_channels, 3, padding=1)),
-        ]
-        
-        self.out = nn.Sequential(*self.out)
+            zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1)),
+        )
 
 
 
@@ -496,12 +480,6 @@ class UNetModel(nn.Module):
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y)
 
-        if self.first_layer_embedding:
-            x = x.int()
-            x = x.squeeze(1)
-            x = self.input_embedding(x)
-            x = x.permute(0, 3, 1, 2)
-        
         h = x.type(self.inner_dtype)
         for module in self.input_blocks:
             h = module(h, emb)
