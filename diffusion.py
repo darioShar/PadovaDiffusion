@@ -207,7 +207,8 @@ class DiffusionProcess:
                     sigma_t = self.sigma_fn(t_norm_batch).view(-1, *([1] * (xt.dim() - 1)))
                     f = 0.0
                     g = sigma_t
-
+                
+                
                 # Get the score (using the noise-predicting network)
                 score = self.score_fn(model, xt, t_batch)
                 # Euler–Maruyama update:
