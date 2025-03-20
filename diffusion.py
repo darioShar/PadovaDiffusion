@@ -54,7 +54,7 @@ def match_last_dims(data, size):
     return data.repeat(1, *(size[1:]))
 
 class DiffusionProcess:
-    def __init__(self, device=None, T=1.0, process_type='VP', schedule='linear', **kwargs):
+    def __init__(self, device=None, T=1.0, process_type='VP', schedule='cosine', **kwargs):
         """
         process_type: 'VP' (variance preserving) or 'VE' (variance exploding)
         schedule: for VP, choose 'linear' or 'cosine'
@@ -115,7 +115,6 @@ class DiffusionProcess:
         t_norm = t / self.T  # normalize to [0,1]
         if self.process_type == 'VP':
             alpha_bar = self.alpha_bar(t_norm).view(-1, *([1] * (x.dim() - 1)))
-            
             epsilon = model(x, t_norm) #.view(-1, 1))
             score = -epsilon / torch.sqrt(1 - alpha_bar)
             return score
@@ -182,7 +181,7 @@ class DiffusionProcess:
         model.eval()
         with torch.inference_mode():
             # Create a time discretization from T to 0
-            t_seq = torch.linspace(self.T, 0, reverse_steps + 1, device=self.device)
+            t_seq = torch.linspace(self.T - 1e-4, 1e-4, reverse_steps + 1, device=self.device)
             if progress:
                 progress_bar = tqdm(range(reverse_steps))
             else:
@@ -200,7 +199,8 @@ class DiffusionProcess:
                     if self.schedule == 'linear':
                         beta_t = self.beta_min + t_norm_batch * (self.beta_max - self.beta_min)
                     elif self.schedule == 'cosine':
-                        beta_t = (math.pi / (self.T * (1 + self.s))) * torch.tan(((t_norm_batch + self.s) / (1 + self.s)) * (math.pi / 2))
+                        val = ((t_norm_batch + self.s) / (1 + self.s)) * (math.pi / 2)
+                        beta_t = (math.pi / ((1 + self.s))) * torch.sin(val)
                     beta_t = beta_t.view(-1, *([1] * (xt.dim() - 1)))
                     f = -0.5 * beta_t * xt
                     g = torch.sqrt(beta_t)
