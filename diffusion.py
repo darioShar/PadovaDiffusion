@@ -248,7 +248,7 @@ def create_unet():
     channels = 1
     out_channels = 1
     
-    first_layer_embedding = True
+    first_layer_embedding = False
     embedding_dim = 3 # MD4 needs a value for masks, so set of values is {0, 1, 2}
     output_dim = 1 # We only output a single probability value
     
@@ -377,8 +377,8 @@ def train(num_epochs, checkpoint_interval, batch_size, learning_rate, checkpoint
             optimizer.step()
 
             running_loss += loss.item()
-            # if batch_idx % 100 == 0:
-            #     print(f"Epoch [{epoch}] Batch [{batch_idx}] Loss: {loss.item():.4f}")
+            if batch_idx % 100 == 0:
+                print(f"Epoch [{epoch}] Batch [{batch_idx}] Loss: {loss.item():.4f}")
 
         avg_loss = running_loss / len(dataloader)
         epoch_losses.append(avg_loss)
